@@ -1,0 +1,125 @@
+---
+title: "OutFLANK Analysis for Harmonia Genomics"
+author: "Michael Tofflemire"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+OutFLANK analysis for detecting SNP outliers in the Harmonia Genomics dataset. The analysis uses population metadata and VCF data as inputs and outputs a plot highlighting FST outliers.
+
+---
+
+#### Load Necessary Libraries
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+# Load necessary libraries
+library(OutFLANK)
+library(vcfR)
+library(ggplot2)
+library(dplyr)
+```
+
+
+#### Define vcf and meta file paths and prepare data for OutFLANK
+We are using an LD pruned VCF file (e.g., r^2 > 0.2 and sliding window size of 1000bp). The outgroup individual has also been removed. I also have also defined a population .csv file with individuals broken up into the 5 major populations as defined by the authors. 
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+vcf_path <- "/Users/michaeltofflemire/Library/CloudStorage/Dropbox/sites/storage/local/projects/Harmonia_genomics_2/filtered_no_outgroup_pruned.vcf.gz"
+meta_path <- "/Users/michaeltofflemire/Library/CloudStorage/Dropbox/sites/storage/local/projects/Harmonia_genomics/Harmonia_meta_3.csv"
+
+# Load metadata
+meta <- read.csv(meta_path)
+head(meta)
+
+# Confirm outgroup is removed
+if ("out" %in% meta$SITES) {
+  stop("Outgroup still present in metadata. Remove it and rerun.")
+}
+```
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+# Load VCF data
+data <- read.vcfR(vcf_path)
+geno <- extract.gt(data)  # Extract genotype information
+dim(geno)  # Check dimensions
+
+# Recode genotypes
+G <- geno
+G[geno %in% c("0/0")] <- 0
+G[geno %in% c("0/1")] <- 1
+G[geno %in% c("1/1")] <- 2
+G[is.na(G)] <- 9  # Missing data
+tG <- t(G)  # Transpose: SNPs as columns, individuals as rows
+dim(tG)  # Check dimensions
+
+# Ensure metadata and genotype rows match
+matching_order <- match(meta$ID, rownames(tG))
+if (any(is.na(matching_order))) {
+  stop("Mismatch between metadata IDs and genotype row names. Check alignment.")
+}
+tG_reordered <- tG[matching_order, , drop = FALSE]
+
+# Confirm alignment
+if (!identical(rownames(tG_reordered), as.character(meta$ID))) {
+  stop("Row names of tG_reordered and meta$ID are not identical after reordering.")
+}
+
+# Define populations and subset data
+subpops <- unique(meta$SITES)
+submeta <- subset(meta, SITES %in% subpops)
+subgen <- tG_reordered[meta$SITES %in% subpops, , drop = FALSE]
+
+# Verify alignment
+if (!identical(rownames(subgen), as.character(submeta$ID))) {
+  stop("Row names of subgen and submeta$ID are not identical after subsetting.")
+}
+```
+
+This code will create Fst matrix based on genotype dataset
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+fst <- MakeDiploidFSTMat(subgen, locusNames = 1:ncol(subgen), popNames = submeta$SITES)
+```
+
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE, include=TRUE,results="markup"}
+# Display the first few rows of fst
+head(fst)
+
+```
+
+This code I don't need for this analyiss. This will help me when I am making pretty plots down the road.
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+# Add chromosome and position metadata
+vcf_metadata <- as.data.frame(data@fix[, c("CHROM", "POS")])
+colnames(vcf_metadata) <- c("Chromosome", "Position")
+vcf_metadata$SNP <- 1:nrow(vcf_metadata)
+fst <- merge(fst, vcf_metadata, by = "SNP", all.x = TRUE)
+```
+
+Here, we no run OutFLANK to look for outlier loci. I am setting qthreshold to 0.05 and Left and Right Trim Fractions at 0.01. These are default settings in software. 
+```{r, echo=TRUE, message=FALSE, warning=FALSE, include=TRUE}
+# Run OutFLANK
+OF <- OutFLANK(fst, LeftTrimFraction = 0.01, RightTrimFraction = 0.01,
+               Hmin = 0.05, NumberOfSamples = length(unique(submeta$SITES)), qthreshold = 0.05)
+
+# Visualize results
+OutFLANKResultsPlotter(OF, withOutliers = TRUE, NoCorr = TRUE, 
+                       Hmin = 0.1, binwidth = 0.005, Zoom = FALSE)
+
+
+# Identify outliers
+P1 <- pOutlierFinderChiSqNoCorr(fst, Fstbar = OF$FSTNoCorrbar,
+                                dfInferred = OF$dfInferred, qthreshold = 0.05, Hmin = 0.1)
+outliers <- P1$OutlierFlag == TRUE
+table(outliers)
+```
+
+Finally, we can plot the results and highlight outlier loci
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+# Plot FST with all loci
+plot(P1$LocusName, P1$FST, xlab = "Position", ylab = "FST", 
+     col = rgb(0, 0, 0, alpha = 0.1), pch = 20)
+
+# Add outlier loci in magenta
+points(P1$LocusName[outliers], P1$FST[outliers], col = "magenta", pch = 20)
+```

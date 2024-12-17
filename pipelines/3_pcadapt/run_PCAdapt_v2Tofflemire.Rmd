@@ -1,0 +1,169 @@
+---
+title: "PCAdapt Analysis for Harmonia dataset"
+output:
+  html_document:
+    df_print: paged
+---
+
+#### Michael A. Tofflemire
+
+Below are my scripts for running PCAdapt with the Harmonia whole genome SNP dataset. Similar to OutFLANK, I'm using the same LD-Pruned dataset (e.g., r^2 > 0.2).
+
+
+#### Load Necessary Libraries for PCAdapt anlaysis
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+# ------------------------------
+# 1. Install and Load Libraries
+# ------------------------------
+if (!requireNamespace("pcadapt", quietly = TRUE)) {
+  install.packages("pcadapt")
+}
+if (!requireNamespace("qvalue", quietly = TRUE)) {
+  if (!requireNamespace("BiocManager", quietly = TRUE)) {
+    install.packages("BiocManager")
+  }
+  BiocManager::install("qvalue")
+}
+if (!requireNamespace("dplyr", quietly = TRUE)) {
+  install.packages("dplyr")
+}
+if (!requireNamespace("ggplot2", quietly = TRUE)) {
+  install.packages("ggplot2")
+}
+
+
+# Load libraries
+library(pcadapt)
+library(qvalue)
+library(ggplot2)
+library(dplyr)
+```
+
+
+Once again, using exact same LD-pruned dataset as from the OutFLANK analysis. Here, however, input data is PLINK formatted file.  
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+# ----------------------------
+# 2. Define File Paths
+# ----------------------------
+# Input files
+bed_file <- "/Users/michaeltofflemire/Library/CloudStorage/Dropbox/sites/storage/local/projects/Harmonia_genomics_2/filtered_no_outgroup_pruned.bed"
+bim_file <- "/Users/michaeltofflemire/Library/CloudStorage/Dropbox/sites/storage/local/projects/Harmonia_genomics_2/filtered_no_outgroup_pruned.bim"
+
+# Output files
+bonferroni_output_plot <- "/Users/michaeltofflemire/Library/CloudStorage/Dropbox/sites/storage/local/projects/Harmonia_genomics_2/out/pcadapt_manhattan_plot_bonferroni.png"
+bonferroni_outliers_file <- "/Users/michaeltofflemire/Library/CloudStorage/Dropbox/sites/storage/local/projects/Harmonia_genomics_2/out/pcadapt_bonferroni_outliers.txt"
+```
+
+
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+# ----------------------------
+# 3. Load Genotype Data
+# ----------------------------
+# Read genotype data in PLINK BED format
+genotype_data <- read.pcadapt(bed_file, type = "bed")
+```
+
+
+Run PCAdapt with K =2, which represents number of PC axes to retain for analysis. 
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+# ---------------------------------
+# 4. Perform PCAdapt Analysis
+# ---------------------------------
+# Run PCAdapt with 2 principal components (K = 2)
+pcadapt_results <- pcadapt(genotype_data, K = 2)
+```
+
+
+I'm applying a threshold of 0.01 to identify outlier loci. I'm also using the bonferroni method for identifying outlier loci. There are a couple other methods but this one seemed to be the most strict. 
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+# ---------------------------------
+# 6. Bonferroni Correction
+# ---------------------------------
+# Adjust p-values using the Bonferroni method
+padj <- p.adjust(pcadapt_results$pvalues, method = "bonferroni")
+alpha <- 0.01  # Significance level
+outliers <- which(padj < alpha)  # Identify significant outliers
+cat("Number of Bonferroni outlier loci:", length(outliers), "\n")
+```
+
+
+Plots
+```{r}
+
+# This is basically the PCA plot of all individuals, except this is LD-pruned dataset, so looks a tad different from paper
+# PC Scores
+plot(pcadapt_results, option = "scores")
+
+# Histogram showing p-value distribution
+hist(pcadapt_results$pvalues,                # P-value distribution
+     xlab = "p-values", 
+     main = NULL, 
+     breaks = 50, 
+     col = "orange")
+
+# Q-Q plot
+plot(pcadapt_results, option = "qqplot") 
+
+# Manhattan plot (does not include highlighted outlier loci)
+plot(pcadapt_results, option = "manhattan")
+
+# This code will create manhattan plot with outlier loci highlighted based on threshold
+# Create the Manhattan plot manually
+manhattan_data <- data.frame(
+  SNP = seq_along(pcadapt_results$pvalues),
+  PValue = pcadapt_results$pvalues
+)
+
+# Plot the Manhattan plot using base R
+plot(
+  manhattan_data$SNP, 
+  -log10(manhattan_data$PValue), 
+  xlab = "Loci", 
+  ylab = expression(-log[10](italic(p))),
+  pch = 20, 
+  col = "black",
+  main = "Manhattan Plot with Highlighted Outliers"
+)
+
+# Add highlighted points for outliers
+outliers <- which(padj < alpha)  # Outlier indices
+# Add highlighted points for outliers with transparency
+points(
+  outliers, 
+  -log10(manhattan_data$PValue[outliers]), 
+  col = rgb(1, 0, 1, alpha = 0.5),  # Magenta color with 50% transparency
+  pch = 19, 
+  cex = 0.8
+)
+
+
+```
+
+This codee will make output of outlier loci and Chromosome/SNP positions for each outlier. 
+```{r, echo=TRUE, message=FALSE, warning=FALSE, fig.show="hold"}
+# ----------------------------
+# 7. Add Chromosome and SNP Information to Outliers
+# This may be redundaant. Code right after pretty much does same thing. 
+# ----------------------------
+# Read the .bim file
+bim_data <- read.table(bim_file, header = FALSE, stringsAsFactors = FALSE)
+colnames(bim_data) <- c("CHR", "SNP", "CM", "BP", "REF", "ALT")
+
+# Subset the .bim data for outlier loci
+outlier_info <- bim_data[outliers, c("CHR", "SNP", "BP")]
+
+# Save outliers with chromosome and SNP info to a file
+write.table(outlier_info, bonferroni_outliers_file, 
+            row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t")
+
+# Print out the first few outliers for verification
+print(head(outlier_info))
+
+
+# ==============================
+# End of Analysis
+# ==============================
+```
+
+

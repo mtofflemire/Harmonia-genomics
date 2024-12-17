@@ -1,0 +1,13 @@
+# Load required library
+library(dplyr)
+file1 <- "/Users/michaeltofflemire/Library/CloudStorage/Dropbox/sites/storage/local/projects/Harmonia_genomics_2/out/pcadapt_bonferroni_outliers.csv"
+file2 <- "/Users/michaeltofflemire/Library/CloudStorage/Dropbox/sites/storage/local/projects/Harmonia_genomics_2/out/outflank_outliers_info.csv"
+outliers1 <- read.csv(file1)
+outliers2 <- read.csv(file2)
+colnames(outliers1) <- tolower(colnames(outliers1))
+colnames(outliers2) <- tolower(colnames(outliers2))
+outliers1_subset <- outliers1 %>% select(locus, chromosome, position)
+outliers2_subset <- outliers2 %>% select(locus)
+overlapping_loci <- inner_join(outliers2_subset, outliers1_subset, by = "locus")
+num_overlaps <- nrow(overlapping_loci)
+cat("Number of overlapping loci:", num_overlaps, "\n")
